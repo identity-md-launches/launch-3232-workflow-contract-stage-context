@@ -6,7 +6,7 @@ Cash-budget model for FirmVault, LpDesk and Burner, not a forecast or price pred
 
 | Item | Value |
 | --- | --- |
-| Chain / pair | Base mainnet (8453) / NOTSTOCK-IMD |
+| Chain / pair | Robinhood Chain (4663) / NOTSTOCK-IMD |
 | Supply / decimals | 1,000,000,000 / 18 |
 | Distribution | 10% swarm, 30% pool, 10% dev wallet, 50% LpDesk |
 | Pool fee / launching side / network | 1.25% / 1% / 0.25% of trade |
@@ -110,7 +110,7 @@ Buybacks swap at the pool's price with the operator's minimum out set by hand (S
 
 ## LpDesk position income (separate line, explicit assumption)
 
-LpDesk holds 50% of supply (500,000,000 NOTSTOCK) plus the LiquidityIn above, deployed into concentrated positions on any listed venue on Base (the six of SPEC.md section 2b: Uniswap v4, Uniswap v3, PancakeSwap v3, SushiSwap v3 and two Aerodrome Slipstream position managers, and any venue added by AddVenue vote), against listed assets (IMD, WETH, USDC, cbBTC, Coinbase tokenized stocks): by the operator (dev wallet) directly during the 7 days after NOTSTOCK registration, by OpenPosition vote after that. LpDesk never stakes position NFTs; positions earn only pool fees. This income is not part of FirmVault's fee split and is not counted in ProjectIncome, Buyback or LiquidityIn above.
+LpDesk holds 50% of supply (500,000,000 NOTSTOCK) plus the LiquidityIn above, deployed into concentrated positions on any listed venue on Robinhood Chain (the three of SPEC.md section 2b: Uniswap v4, Uniswap v3 and Aero Slipstream, and any venue added by AddVenue vote), against listed assets (IMD, WETH, USDG, cbBTC, Robinhood stock tokens): by the operator (dev wallet) directly during the 7 days after NOTSTOCK registration, by OpenPosition vote after that. LpDesk never stakes position NFTs; positions earn only pool fees. This income is not part of FirmVault's fee split and is not counted in ProjectIncome, Buyback or LiquidityIn above.
 
 | Assumption | Value |
 | --- | --- |
@@ -118,21 +118,20 @@ LpDesk holds 50% of supply (500,000,000 NOTSTOCK) plus the LiquidityIn above, de
 | Assumed concentrated-position fee yield, in-range value, per year | 15% (illustrative; depends entirely on the operator's chosen range and pair volume) |
 | Modeled LpDesk fee income, per year | about 6% of the value of LpDesk's positions (40% in range x 15%), not a committed or guaranteed figure |
 
-This income is split by LpDesk under SPEC.md section 2, per token: NOTSTOCK fees 100% to Burner and burned; IMD fees 25% to FirmVault's buyback bucket, 25% project wallet, 25% top-up basket, 25% free; WETH, USDC, cbBTC and stock fees 25% to that asset's buyback basket (bought back for NOTSTOCK in that position's pool and sent to the dead address), 25% project wallet, 25% top-up basket, 25% free. If half of that fee income is earned in NOTSTOCK (assumption): burned 62.5% of it (the NOTSTOCK half plus the buyback quarter of the other half), project wallet 12.5%, top-up basket 12.5% and free balance 12.5%; at about 6% a year of position value that is about 3.75% a year burned and about 0.75% a year to each of the other three. None of it is pre-counted in the Buyback rows above, which only model the launching-side fee. Impermanent loss on LpDesk's own two-asset exposure is not modeled; a falling NOTSTOCK price reduces the dollar value of the 50% LpDesk allocation regardless of fee income.
+This income is split by LpDesk under SPEC.md section 2, per token: NOTSTOCK fees 100% to Burner and burned; IMD fees 25% to FirmVault's buyback bucket, 25% project wallet, 25% top-up basket, 25% free; WETH, USDG, cbBTC and stock fees 25% to that asset's buyback basket (bought back for NOTSTOCK in that position's pool and sent to the dead address), 25% project wallet, 25% top-up basket, 25% free. If half of that fee income is earned in NOTSTOCK (assumption): burned 62.5% of it (the NOTSTOCK half plus the buyback quarter of the other half), project wallet 12.5%, top-up basket 12.5% and free balance 12.5%; at about 6% a year of position value that is about 3.75% a year burned and about 0.75% a year to each of the other three. None of it is pre-counted in the Buyback rows above, which only model the launching-side fee. Impermanent loss on LpDesk's own two-asset exposure is not modeled; a falling NOTSTOCK price reduces the dollar value of the 50% LpDesk allocation regardless of fee income.
 
 ## No invested capital
 
-No ETH, USDC or other developer capital funds this launch. The only recurring cost is the IMD fee paid to the swarm per order (0.5 IMD per order, not a model input here). FirmVault and LpDesk run entirely from the pool's own trading fee from the first trade; at zero volume every FirmVault share, the LpDesk baskets and LpDesk income are zero and no spending occurs.
+No ETH, USDG or other developer capital funds this launch. The only recurring cost is the IMD fee paid to the swarm per order (0.5 IMD per order, not a model input here). FirmVault and LpDesk run entirely from the pool's own trading fee from the first trade; at zero volume every FirmVault share, the LpDesk baskets and LpDesk income are zero and no spending occurs.
 
 ## Roadmap
 
-1. Launch on Base: NOTSTOCK token, NOTSTOCK/IMD pool, FirmVault, GenesisSplitter, LpDesk with Burner; right after, LpDesk's modules by deployModule. The website of SITE.md is built in the same order.
-2. LpDesk on Base: positions against the listed assets on any listed venue (the six of SPEC.md section 2b plus any added by AddVenue vote), opened directly by the operator in the first 7 days, by OpenPosition vote after, and closed by the operator at any time with no vote, back to LpDesk's free balance; the price and every range are set by hand, with no reference-price check; an open or top-up reverts if an existing pool's price differs from the given price by more than 0.5%; new assets only by AddAsset vote, which takes only the asset address; new venues only by AddVenue vote, which takes only the position manager address and its kind.
+1. Launch on Robinhood Chain: NOTSTOCK token, NOTSTOCK/IMD pool, FirmVault, GenesisSplitter, LpDesk with Burner; right after, LpDesk's modules by deployModule. The website of SITE.md is built in the same order.
+2. LpDesk on Robinhood Chain: positions against the listed assets on any listed venue (the three of SPEC.md section 2b plus any added by AddVenue vote), opened directly by the operator in the first 7 days, by OpenPosition vote after, and closed by the operator at any time with no vote, back to LpDesk's free balance; the price and every range are set by hand, with no reference-price check; an open or top-up reverts if an existing pool's price differs from the given price by more than 0.5%; new assets only by AddAsset vote, which takes only the asset address; new venues only by AddVenue vote, which takes only the position manager address and its kind.
 
 ### Step 3: multichain (a separate swarm order after launch, once NOTSTOCK trades)
 
-- Bridge: NOTSTOCK crosses chains through LayerZero, an OFT adapter on Base locking the original supply and token copies on other chains; supply on all chains together never exceeds 1 000 000 000.
-- Each chain gets its own LpDesk with the same rules and a NOTSTOCK/IMD pool against that chain's IMD. The Base LpDesk already has the path (SPEC.md section 2a): an AddBridge vote registers the adapter and the destination LpDesk, then a BridgeOut vote sends free NOTSTOCK only to that LpDesk; no Base contract is replaced.
+- Bridge: NOTSTOCK crosses chains through LayerZero, an OFT adapter on Robinhood Chain locking the original supply and token copies on other chains; supply on all chains together never exceeds 1 000 000 000.
+- Each chain gets its own LpDesk with the same rules and a NOTSTOCK/IMD pool against that chain's IMD. The Robinhood Chain LpDesk already has the path (SPEC.md section 2a): an AddBridge vote registers the adapter and the destination LpDesk, then a BridgeOut vote sends free NOTSTOCK only to that LpDesk; no Robinhood Chain contract is replaced.
 - Ethereum mainnet: pools against gold (PAXG, XAUT), against $YOLO, and against Ondo tokenized stocks.
-- Robinhood Chain: pools against Robinhood tokenized stocks.
 - No cost or income from step 3 is counted in the tables above.
