@@ -1,4 +1,4 @@
-# The Firm website rules
+# Not Firm website rules
 
 Built in the same order as the launch of SPEC.md, against the addresses of that launch (Robinhood Chain 4663); LpGovernor, PriceGuard and Burner addresses are read from LpDesk's views.
 

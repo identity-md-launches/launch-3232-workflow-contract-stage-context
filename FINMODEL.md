@@ -1,4 +1,4 @@
-# The Firm financial model (token notSTOCK, $NOTSTOCK)
+# Not Firm financial model (token notSTOCK, $NOTSTOCK)
 
 Cash-budget model for FirmVault, LpDesk and Burner, not a forecast or price prediction. No ETH or dollar amount is invested by the developer at launch; the only launch cost is the swarm fee of the one launch order, not a model input here. All volumes, the LpDesk yield assumptions and the LpDesk fee-side share are authored inputs, not observed NOTSTOCK activity.
 

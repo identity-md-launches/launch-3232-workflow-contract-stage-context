@@ -1,8 +1,8 @@
-# The Firm: notSTOCK ($NOTSTOCK)
+# Not Firm: notSTOCK ($NOTSTOCK)
 
 Don't work for the firm. Let the firm work for you.
 
-Token name "The Firm", symbol NOTSTOCK, on Robinhood Chain (chain 4663), paired with IMD. 18 decimals, 1 000 000 000 NOTSTOCK, minted once at launch. The binding rules are in SPEC.md; the cash model is in FINMODEL.md.
+Token name "Not Firm", symbol NOTSTOCK, on Robinhood Chain (chain 4663), paired with IMD. 18 decimals, 1 000 000 000 NOTSTOCK, minted once at launch. The binding rules are in SPEC.md; the cash model is in FINMODEL.md.
 
 ## Tokenomics
 
