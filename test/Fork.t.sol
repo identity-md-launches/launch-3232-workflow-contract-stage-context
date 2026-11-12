@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {TestBase} from "./TestBase.sol";
+import {Vm} from "./vendor/forge-std/src/Vm.sol";
 import {DeployModules} from "../script/DeployModules.s.sol";
 import {LpDesk} from "../src/LpDesk.sol";
 import {FirmVault} from "../src/FirmVault.sol";
@@ -622,5 +623,167 @@ contract ForkTest is TestBase {
         new FirmVault(PROJECT, address(desk));
         g = g - gasleft();
         assertLt(g, 16_777_216);
+    }
+
+    // ------------------------------------------------------------ pending fees on every venue (review 88c4e64e)
+
+    /// @dev Sums the FeesSplit amounts of `token`, their per-split quarters (each rounded down, as LpDesk splits) and
+    /// the ToppedUp amount logged by LpDesk since recordLogs.
+    function _splitAndUsed(address tkn) internal returns (uint256 fees, uint256 quarters, uint256 used) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter != address(desk)) continue;
+            if (logs[i].topics[0] == LpDesk.FeesSplit.selector) {
+                (address t, uint256 amt) = abi.decode(logs[i].data, (address, uint256));
+                if (t == tkn) {
+                    fees += amt;
+                    quarters += amt / 4;
+                }
+            } else if (logs[i].topics[0] == LpDesk.ToppedUp.selector) {
+                (uint256 amt,) = abi.decode(logs[i].data, (uint256, uint128));
+                used += amt;
+            }
+        }
+    }
+
+    /// @dev Both positions of one pool earn fees; the whole of b (published liquidity) moves into a. The fees of both
+    /// are split as collected fees (WETH in equal quarters, NOTSTOCK to Burner) before the deposit, b stays open with
+    /// no liquidity, can be collected and closed, and every token the desk held is accounted for.
+    function _wholeMoveWithFeesThenClose(address pm, VenueKind kind, uint24 fee, int24 spacing) internal {
+        vm.prank(DEV);
+        uint256 a = desk.open(_params(WETH, pm, fee, spacing, -spacing * 200, spacing * 200, ONE, 300e18));
+        vm.prank(DEV);
+        uint256 b = desk.open(_params(WETH, pm, fee, spacing, -spacing * 200, spacing * 200, ONE, 100e18));
+        _trade(a, 2e18, 2e18);
+        uint256 burner0 = token.balanceOf(address(burner));
+        uint256 proj0 = IERC20(WETH).balanceOf(PROJECT);
+        uint256 top0 = desk.topUpBasket(WETH);
+        uint256 bb0 = desk.buybackBasket(WETH);
+        uint256 freeWeth0 = desk.freeBalance(WETH);
+        uint256 deskWeth0 = IERC20(WETH).balanceOf(address(desk));
+        uint256 deskNot0 = token.balanceOf(address(desk));
+        uint128 la = desk.positionLiquidity(a);
+        uint128 lb = desk.positionLiquidity(b);
+        vm.recordLogs();
+        vm.prank(DEV);
+        desk.moveLiquidity(b, a, lb, 0, 0);
+        (uint256 wethFees, uint256 quarters,) = _splitAndUsed(WETH);
+        uint256 projGain = IERC20(WETH).balanceOf(PROJECT) - proj0;
+        uint256 burnGain = token.balanceOf(address(burner)) - burner0;
+        // both positions had WETH and NOTSTOCK fees pending; a holds 3x b's liquidity
+        assertGt(projGain, 0, "WETH fees split");
+        assertGt(burnGain, 0, "NOTSTOCK fees burned");
+        assertEq(projGain, quarters, "project quarter of every WETH fee split");
+        assertEq(desk.topUpBasket(WETH) - top0, projGain, "top-up quarter");
+        assertEq(desk.buybackBasket(WETH) - bb0, projGain, "buyback quarter");
+        assertGe(desk.freeBalance(WETH), freeWeth0 + wethFees - 3 * projGain, "free quarter plus leftovers stay free");
+        // WETH conservation: what the desk gained is the fees less the project's quarter plus any move leftover
+        assertGe(IERC20(WETH).balanceOf(address(desk)) + projGain, deskWeth0 + wethFees);
+        // NOTSTOCK: none of the desk's own balance went to Burner, only leftovers of the move came back
+        assertGe(token.balanceOf(address(desk)), deskNot0);
+        assertEq(desk.positionLiquidity(b), 0, "whole position moved");
+        assertGe(desk.positionLiquidity(a), la + lb * 99 / 100, "principal re-deposited");
+        assertTrue(desk.getPosition(b).open);
+        // b is empty: collect splits nothing and close withdraws nothing, on every venue
+        top0 = desk.topUpBasket(WETH);
+        proj0 = IERC20(WETH).balanceOf(PROJECT);
+        deskWeth0 = IERC20(WETH).balanceOf(address(desk));
+        vm.prank(DEV);
+        desk.collect(b);
+        vm.prank(DEV);
+        desk.close(b, 0, 0);
+        assertFalse(desk.getPosition(b).open);
+        assertEq(desk.topUpBasket(WETH), top0);
+        assertEq(IERC20(WETH).balanceOf(PROJECT), proj0);
+        assertEq(IERC20(WETH).balanceOf(address(desk)), deskWeth0);
+        vm.expectRevert(LpDesk.PositionNotOpen.selector);
+        vm.prank(DEV);
+        desk.moveLiquidity(b, a, 1, 0, 0);
+        vm.expectRevert(LpDesk.PositionNotOpen.selector);
+        vm.prank(DEV);
+        desk.moveLiquidity(a, b, 1, 0, 0);
+        // a still closes and returns its principal to the free balance
+        uint256 freeNot = desk.freeBalance(address(token));
+        vm.prank(DEV);
+        desk.close(a, 0, 0);
+        assertGt(desk.freeBalance(address(token)), freeNot);
+        assertEq(IERC20(WETH).balanceOf(address(_module(kind))), 0);
+        assertEq(token.balanceOf(address(_module(kind))), 0);
+    }
+
+    function test_wholeMoveWithPendingFeesThenCloseV4() public onFork {
+        _wholeMoveWithFeesThenClose(FirmAddresses.UNI_V4_POSITION_MANAGER, VenueKind.V4, 3000, 60);
+    }
+
+    function test_wholeMoveWithPendingFeesThenCloseV3() public onFork {
+        _wholeMoveWithFeesThenClose(FirmAddresses.UNI_V3_POSITION_MANAGER, VenueKind.V3, 3000, 60);
+    }
+
+    function test_wholeMoveWithPendingFeesThenCloseCL() public onFork {
+        _wholeMoveWithFeesThenClose(FirmAddresses.AERO_CL_POSITION_MANAGER, VenueKind.CL, 0, 200);
+    }
+
+    /// @dev A top-up of an asset-only position with fees pending in both currencies: the fees are split first and
+    /// the basket is debited by exactly what the position took (topUpAfter == topUpBefore + feeQuarter - used),
+    /// on every venue, and the desk's WETH balance moves by exactly fees - projectQuarter - used.
+    function _topUpWithPendingFees(address pm, VenueKind kind, uint24 fee, int24 spacing) internal {
+        bool n0 = address(token) < WETH;
+        vm.prank(DEV);
+        uint256 a = desk.open(_params(WETH, pm, fee, spacing, -spacing * 200, spacing * 200, ONE, 300e18));
+        (, uint160 cur, int24 tick) = _module(kind).poolPrice(_ref(a));
+        int24 base = (tick / spacing) * spacing;
+        OpenParams memory q = n0
+            ? _params(WETH, pm, fee, spacing, base - spacing * 100, base - spacing, cur, 10e18)
+            : _params(WETH, pm, fee, spacing, base + spacing * 2, base + spacing * 100, cur, 10e18);
+        vm.prank(DEV);
+        uint256 id2 = desk.open(q);
+        // trade across id2's range both ways so it earns both currencies, then fill the basket from a's fees
+        _trade(a, 0, 20e18);
+        _trade(a, 20e18, 0);
+        vm.prank(DEV);
+        desk.collect(a);
+        uint256 t = desk.topUpBasket(WETH);
+        assertGt(t, 0);
+        (, cur,) = _module(kind).poolPrice(_ref(a));
+        uint160 sa = PoolMath.getSqrtRatioAtTick(q.tickLower);
+        uint160 sb = PoolMath.getSqrtRatioAtTick(q.tickUpper);
+        uint128 expectL =
+            n0 ? PoolMath.liquidityFromAmount1(cur, sa, sb, t) : PoolMath.liquidityFromAmount0(cur, sa, sb, t);
+        if (expectL == 0) return; // the price moved past the range on this fork: nothing to top up
+        uint256 proj0 = IERC20(WETH).balanceOf(PROJECT);
+        uint256 burner0 = token.balanceOf(address(burner));
+        uint256 deskWeth0 = IERC20(WETH).balanceOf(address(desk));
+        uint256 bb0 = desk.buybackBasket(WETH);
+        uint256 deskNot0 = token.balanceOf(address(desk));
+        uint128 l0 = desk.positionLiquidity(id2);
+        vm.recordLogs();
+        vm.prank(DEV);
+        desk.increaseLiquidity(id2, t, cur, expectL * 995 / 1000);
+        (uint256 wethFees, uint256 quarters, uint256 used) = _splitAndUsed(WETH);
+        uint256 projGain = IERC20(WETH).balanceOf(PROJECT) - proj0;
+        assertGt(projGain, 0, "id2's pending WETH fees split");
+        assertGt(token.balanceOf(address(burner)) - burner0, 0, "id2's pending NOTSTOCK fees to Burner");
+        assertEq(projGain, quarters);
+        assertEq(desk.buybackBasket(WETH) - bb0, projGain);
+        assertGt(used, 0);
+        assertLe(used, t);
+        assertEq(desk.topUpBasket(WETH), t + projGain - used, "basket debited by exactly what the position took");
+        assertEq(IERC20(WETH).balanceOf(address(desk)) + projGain + used, deskWeth0 + wethFees, "WETH conserved");
+        assertEq(token.balanceOf(address(desk)), deskNot0, "a top-up takes no NOTSTOCK");
+        assertGe(desk.positionLiquidity(id2) - l0, expectL * 995 / 1000);
+        assertEq(IERC20(WETH).balanceOf(address(_module(kind))), 0);
+        assertEq(token.balanceOf(address(_module(kind))), 0);
+    }
+
+    function test_topUpWithPendingFeesV4() public onFork {
+        _topUpWithPendingFees(FirmAddresses.UNI_V4_POSITION_MANAGER, VenueKind.V4, 3000, 60);
+    }
+
+    function test_topUpWithPendingFeesV3() public onFork {
+        _topUpWithPendingFees(FirmAddresses.UNI_V3_POSITION_MANAGER, VenueKind.V3, 3000, 60);
+    }
+
+    function test_topUpWithPendingFeesCL() public onFork {
+        _topUpWithPendingFees(FirmAddresses.AERO_CL_POSITION_MANAGER, VenueKind.CL, 0, 200);
     }
 }
