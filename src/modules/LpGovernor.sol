@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {IERC20, IOFTAdapter} from "../interfaces/IExternal.sol";
 import {ILpDesk, IPriceGuard, OpenParams, VenueKind} from "../interfaces/ILpDesk.sol";
+import {PoolMath} from "../libraries/PoolMath.sol";
 
 /// @notice LpDesk module (SPEC.md section 2a): staking, proposals, votes, the operator veto, execution and the
 /// permanent bridge records. Deployed by LpDesk.deployModule; msg.sender is its LpDesk. NOTSTOCK moves only back
@@ -141,11 +142,25 @@ contract LpGovernor {
 
     // ---------------------------------------------------------------- proposals
 
+    /// @notice `amount` is NOTSTOCK, or the asset when the range takes no NOTSTOCK at the given price (as LpDesk reads
+    /// it at execute); the creation-time free-balance check is made against that token (finding 3d06756d).
     function proposeOpenPosition(OpenParams calldata p) external returns (uint256 id) {
-        if (p.amount > ILpDesk(lpDesk).freeBalance(ILpDesk(lpDesk).notStock())) revert AboveFreeBalance();
+        if (p.amount > ILpDesk(lpDesk).freeBalance(_amountToken(p))) revert AboveFreeBalance();
         id = _create(Kind.OpenPosition);
         _proposals[id].open = p;
         _proposals[id].amount = p.amount;
+    }
+
+    /// @dev The token an OpenPosition `amount` denominates, as LpDesk._amountsAt reads it: NOTSTOCK unless the range
+    /// takes no NOTSTOCK at the given price, then the asset.
+    function _amountToken(OpenParams calldata p) private view returns (address t) {
+        t = ILpDesk(lpDesk).notStock();
+        uint160 sa = PoolMath.getSqrtRatioAtTick(p.tickLower);
+        uint160 sb = PoolMath.getSqrtRatioAtTick(p.tickUpper);
+        uint128 l = t < p.asset
+            ? PoolMath.liquidityFromAmount0(p.sqrtPriceX96, sa, sb, p.amount)
+            : PoolMath.liquidityFromAmount1(p.sqrtPriceX96, sa, sb, p.amount);
+        if (l == 0) t = p.asset;
     }
 
     function proposeAddAsset(address asset) external returns (uint256 id) {

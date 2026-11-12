@@ -151,11 +151,12 @@ library PoolMath {
 
     /// @notice True when price a and price b (as sqrt prices) differ by at most 0.5% in either direction.
     function within0_5Percent(uint160 sqrtActual, uint160 sqrtGiven) internal pure returns (bool) {
-        // price ratio = (actual/given)^2; test 0.995 <= ratio <= 1.005 with exact integer arithmetic.
-        uint256 a2 = mulDiv(sqrtActual, sqrtActual, Q96);
-        uint256 g2 = mulDiv(sqrtGiven, sqrtGiven, Q96);
-        if (a2 * 1000 < g2 * 995) return false;
-        if (a2 * 1000 > g2 * 1005) return false;
+        // price ratio = (actual/given)^2; 0.995 <= ratio <= 1.005 is sqrt(0.995) <= actual/given <= sqrt(1.005),
+        // compared on the sqrt prices themselves so no resolution is lost at any price (finding 5395cffb).
+        uint256 a = uint256(sqrtActual) * 1e9;
+        uint256 g = uint256(sqrtGiven);
+        if (a < g * 997_496_867) return false;
+        if (a > g * 1_002_496_883) return false;
         return true;
     }
 

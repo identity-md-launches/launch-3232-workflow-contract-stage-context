@@ -42,10 +42,10 @@ contract LpDesk is ILpDesk {
     }
 
     // Module creation code hashes, keccak256(type(Module).creationCode) of this build (checked by the bytecode test).
-    bytes32 public constant LP_GOVERNOR_CODE_HASH = 0x78b84c5f1eb9caec17d269cf3931761accbbaaf6803ce95f27dca9998abf84f5;
+    bytes32 public constant LP_GOVERNOR_CODE_HASH = 0x950d93daedd06fac5d03b1811ffb9225e1fadbdf4923bd7d6b064e01ba1c0729;
     bytes32 public constant PRICE_GUARD_CODE_HASH = 0xf35f9b9e2d830f1ddff4e25aa6296ffbfd9234d46ccfe6a5d38e4ad870ab0bc8;
-    bytes32 public constant VENUE_V3_CODE_HASH = 0x08c59dece67d50ff2859006e38beed3cfea6fbe8e77ba5f75a4c94bca8fa487f;
-    bytes32 public constant VENUE_V4_CODE_HASH = 0x372fa93eadf0838614f60ef78d2770f16569257fb2d0000e3a24e31f68b8869a;
+    bytes32 public constant VENUE_V3_CODE_HASH = 0xb0278c0b1e4a0a41235e60bb126e111586c6e9e44e4062db18edf60e47d47349;
+    bytes32 public constant VENUE_V4_CODE_HASH = 0x91be9ed72e94f5da8f4f7155221beb8106829e93ff88ab06d54269e125e2994c;
 
     uint256 public constant BOOTSTRAP_DURATION = 604_800;
     address public constant DEAD = FirmAddresses.DEAD;
@@ -100,6 +100,7 @@ contract LpDesk is ILpDesk {
     error ZeroAddress();
     error PairMismatch();
     error BridgeMismatch();
+    error BuybackMismatch();
 
     constructor(address token, address operator_, address projectWallet_) {
         if (token == address(0) || operator_ == address(0) || projectWallet_ == address(0)) revert ZeroAddress();
@@ -266,7 +267,13 @@ contract LpDesk is ILpDesk {
         if (!a.open || !b.open) revert PositionNotOpen();
         if (a.asset != b.asset) revert PairMismatch();
         _collect(fromId);
-        (uint256 a0, uint256 a1) = IVenueModule(_moduleFor(a.kind)).decrease(_ref(a), liquidity, min0, min1);
+        IVenueModule ma = IVenueModule(_moduleFor(a.kind));
+        // the collect's 1-wei poke (V3/CL) leaves L-1: a request for the published figure moves the whole position
+        uint128 have = ma.liquidityOf(_ref(a));
+        if (liquidity > have) liquidity = have;
+        (uint256 a0, uint256 a1) = ma.decrease(_ref(a), liquidity, min0, min1);
+        // the destination's pending fees are collected and split first: v4 nets them against an increase otherwise
+        if (toId != fromId) _collect(toId);
         IVenueModule mb = IVenueModule(_moduleFor(b.kind));
         _send(b.notStockIs0 ? notStock : b.asset, address(mb), a0);
         _send(b.notStockIs0 ? b.asset : notStock, address(mb), a1);
@@ -274,13 +281,15 @@ contract LpDesk is ILpDesk {
         emit ToppedUp(toId, 0, added);
     }
 
-    /// @notice Adds up to `amount` of the position's asset from its top-up basket, never NOTSTOCK.
+    /// @notice Adds up to `amount` of the position's asset from its top-up basket, never NOTSTOCK. The position's
+    /// pending fees are collected and split first, so the top-up pays for all it adds (v4 would net them otherwise).
     function increaseLiquidity(uint256 id, uint256 amount, uint160 sqrtPriceX96, uint128 minLiquidity)
         external
         onlyOperator
     {
         Position storage p = _positions[id];
         if (!p.open) revert PositionNotOpen();
+        _collect(id);
         if (amount > topUpBasket[p.asset]) revert AboveBasket();
         IVenueModule m = IVenueModule(_moduleFor(p.kind));
         (bool exists, uint160 sqrtP,) = m.poolPrice(_ref(p));
@@ -305,17 +314,22 @@ contract LpDesk is ILpDesk {
     }
 
     /// @notice Swaps `amount` of the position's asset from its buyback basket for NOTSTOCK in the position's own pool;
-    /// all NOTSTOCK out goes to the dead address. IMD buybacks belong to FirmVault.
+    /// all NOTSTOCK out goes to the dead address. IMD buybacks belong to FirmVault. When the pool's liquidity runs out
+    /// before the whole amount is taken, the basket is debited only by what was swapped and the rest stays in it.
     function buyback(uint256 id, uint256 amount, uint256 minOut) external onlyOperator returns (uint256 out) {
         Position storage p = _positions[id];
         if (p.asset == IMD) revert ImdNotBuyable();
         if (amount > buybackBasket[p.asset]) revert AboveBasket();
         IVenueModule m = IVenueModule(_moduleFor(p.kind));
-        buybackBasket[p.asset] -= amount;
+        uint256 before = IERC20(p.asset).balanceOf(address(this));
         _send(p.asset, address(m), amount);
         out = m.swapExactInToDead(_ref(p), p.asset, amount);
+        // what the pool took is LpDesk's own balance change: the module returned the rest in the same call
+        uint256 spent = before - IERC20(p.asset).balanceOf(address(this));
+        if (spent > amount) revert BuybackMismatch();
+        buybackBasket[p.asset] -= spent;
         if (out < minOut) revert BelowMinOut();
-        emit BuybackExecuted(id, amount, out);
+        emit BuybackExecuted(id, spent, out);
     }
 
     /// @notice Sends `amount` of free NOTSTOCK to the dead address.

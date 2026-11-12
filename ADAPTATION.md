@@ -54,3 +54,67 @@ refused. An exact rational comparison rejected every minimum whose 99.5% was not
 
 SPEC.md 6 asks for every fork test to run under `--fork-url`. The independent verifier runs with no network, so each
 fork test calls `vm.skip(true)` when `block.chainid != 4663` and runs fully with `--fork-url`.
+
+## 7. Buyback partial fills debit the basket by what the pool took
+
+Review finding cfbdc8d3 (medium), reproduced with the reviewer's proof: a v3/CL pool whose liquidity runs out stops
+at the price limit with input left over and asks the callback only for what it consumed; VenueV3 kept the rest, and
+LpDesk had already debited the whole amount from the buyback basket. Now both modules return every untaken input to
+LpDesk in the same call (VenueV4 settles only the consumed delta instead of reverting `CurrencyNotSettled`), and
+`LpDesk.buyback` debits `buybackBasket[asset]` by its own balance change of the call, reverting `BuybackMismatch` if
+that exceeds `amount`. `BuybackExecuted` reports the swapped input. Still exact input: a pool with enough liquidity
+takes the whole amount, as before. Tests: `VenueFlowTest.test_buybackPartialFillDebitsOnlyWhatWasSwapped` (offline,
+thin pool), `ForkTest.test_partialFillBuybackV3` and `test_partialFillBuybackV4` (live pools).
+
+## 8. Pending fees are collected and split before a top-up or a move into a position
+
+Review finding a34ecfd2 (medium), reproduced on the Robinhood Chain fork: v4's `modifyLiquidity` credits the
+position's pending fees on an increase too, and VenueV4 settles with `OPEN_DELTA`, so a pending fee paid for part of
+the deposit and came back to LpDesk unsplit, and a pending fee larger than the debt made the call revert
+`DeltaNotNegative`. `LpDesk.increaseLiquidity` now calls `_collect(id)` first and `moveLiquidity` calls `_collect(toId)`
+before the increase (the source was already collected), so every fee is split as SPEC.md section 2 says and the top-up
+basket pays for exactly what the position takes. Tests: `ForkTest.test_v4PendingFeesAreSplitBeforeMoveAndTopUp`,
+`VenueFlowTest.test_moveAndTopUpCollectPendingFeesFirst`.
+
+## 9. VenueV4.unlockCallback answers only the PoolManager it is inside an unlock of
+
+Review finding 55ef5a4b (low), reproduced: the callback took the PoolManager from its own calldata. It now checks
+`msg.sender` against `_pendingPoolManager`, set by `swapExactInToDead` before `unlock` and cleared after, as VenueV3
+does with `_pendingPool`. Test: `VenueFlowTest.test_fakePoolManagerCannotDriveUnlockCallback`.
+
+## 10. moveLiquidity moves at most what the source holds after the fee poke
+
+Review finding cd21873d (low), reproduced: VenueV3.collectFees burns 1 wei of liquidity, so a move with the published
+figure reverted in the position manager. `moveLiquidity` re-reads the source's liquidity after the collect and caps the
+request to it. Tests: `ForkTest.test_v3MoveWithPublishedLiquidity`, `VenueFlowTest.test_moveLiquidityAcceptsPublishedLiquidity`.
+
+## 11. VenueV4.collectFees skips an empty position
+
+Review finding 0e020971 (low), reproduced on the fork: the PoolManager reverts `CannotUpdateEmptyPosition` on a
+zero-liquidity poke, so a v4 position emptied by a move could never be collected or closed. `collectFees` returns
+(0, 0) when `getPositionLiquidity` is 0 (v4 has credited every fee by then), as VenueV3 already did. Test:
+`ForkTest.test_v4EmptiedPositionCanBeClosed`.
+
+## 12. proposeOpenPosition checks the free balance of the token `amount` denominates
+
+Review finding 3d06756d (low), reproduced: `amount` is the asset when the range takes no NOTSTOCK at the given price
+(LpDesk reads it so at execute), but the creation check always compared with free NOTSTOCK. LpGovernor now derives the
+token the same way. Test: `VenueFlowTest.test_openPositionProposalChecksTheAmountToken`.
+
+## 13. Collected V3/CL fees are LpDesk's balance change
+
+Review finding 9a74eb7d (info): VenueV3 reported the position manager's collect figure; SPEC.md section 2 defines the
+split amount as the balance change of the call. VenueV3.collectFees now measures LpDesk's balance before and after,
+less the poke's principal, as VenueV4 does. Equal for every listed asset; differs only for a fee-on-transfer asset.
+
+## 14. within0_5Percent compares sqrt prices
+
+Review finding 5395cffb (info): squaring the sqrt prices floored both to 0 below 2^48, so the band test passed every
+pair there. The check is now `sqrt(0.995) <= actual/given <= sqrt(1.005)` on the sqrt prices with 9-digit constants,
+full resolution at any price, no overflow. Same rate. Test: `PoolMathTest.test_priceBand`.
+
+## 15. Trust notes recorded
+
+Review findings 026f1db4 and 9aae86d1 (info) are the specified design: the one-step operator handover and the
+governance slot and quorum rules of SPEC.md 2a. They are stated in the README under Trust and assumptions; no code
+changed.

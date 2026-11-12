@@ -40,8 +40,9 @@ address LpDesk predicted, each with its creation code hash fixed as a constant i
 when broadcasting; tests call `deployAll(desk)` directly). The verification input of each module is its file under
 `src/modules/`, solc 0.8.26, via_ir, optimizer runs 1, evm cancun, `bytecode_hash = "none"`, no constructor argument.
 
-Runtime sizes of this build: LpDesk 19.1 KB (limit 24 576 B), FirmVault 4.4 KB (10 240), GenesisSplitter 1.1 KB
-(2 048), Burner 647 B (1 024), every module under 24 576 B, LpDesk initcode 20.9 KB (49 152).
+Runtime sizes of this build: LpDesk 19.9 KB (limit 24 576 B), FirmVault 4.4 KB (10 240), GenesisSplitter 1.1 KB
+(2 048), Burner 647 B (1 024), every module under 24 576 B (LpGovernor 13.4 KB, PriceGuard 5.7 KB, VenueV3 7.6 KB,
+VenueV4 11.6 KB), LpDesk initcode 21.7 KB (49 152).
 
 ## After launch (in this order; the website's Setup section offers each step)
 
@@ -66,7 +67,10 @@ other than through these calls.
   IMD top-up basket, LpDesk's free IMD); up to 3 wei of rounding stay undistributed for the next call.
 - Buybacks: FirmVault `buyback(amount, minOut)` swaps bucket IMD in the registered NOTSTOCK/IMD pool; LpDesk
   `buyback(positionId, amount, minOut)` swaps an asset's buyback basket in that position's own pool (never IMD). All
-  NOTSTOCK out goes to the dead address in the same call. `minOut` is manual slippage set by the operator.
+  NOTSTOCK out goes to the dead address in the same call. `minOut` is manual slippage set by the operator. A pool
+  whose liquidity runs out before the whole amount is taken fills the swap partially: the basket is debited only by
+  what the pool took (LpDesk's own balance change), the rest stays in the basket, and the module returns it in the
+  same call (ADAPTATION.md 7).
 
 ## LpDesk rules in short
 
@@ -80,6 +84,10 @@ other than through these calls.
   increaseLiquidity (asset only, from the top-up basket), buyback (from the buyback basket), burn free NOTSTOCK,
   hand over the operator role. Shift and close take manual minimum outs; open and top-up need minimums of at least
   99.5% of the amounts the given price implies and revert if an existing pool's price is more than 0.5% away.
+- Every call that adds to a position (top-up, the destination of a move) collects and splits that position's pending
+  fees first, like shift and close do for the source: Uniswap v4 would otherwise net them against the deposit
+  (ADAPTATION.md 8). A move whose `liquidity` exceeds what the source holds after its fee poke moves everything it
+  holds (ADAPTATION.md 10). A v4 position emptied by a move can still be collected and closed (ADAPTATION.md 11).
 - No function moves NOTSTOCK or any held asset to a wallet other than the project wallet (its 25% fee share). Assets
   leave LpDesk only into a position, as the fee split, by buyback or burn to the dead address, or by an executed
   BridgeOut to a registered destination LpDesk.
@@ -104,12 +112,26 @@ venue's own position views give the position state, and `collect` realises fees.
 
 - Operator (dev wallet): opens positions in the bootstrap, manages ranges and minimums by hand, runs buybacks and burns,
   vetoes proposals. It cannot send funds anywhere but into positions, the dead address and the fee split.
+- Operator handover is one step: `setOperator(newOperator)` takes effect at once, with only a zero-address check, and
+  no owner or governance path can change the role afterwards. A wrong address (mistyped, wrong chain, a contract that
+  cannot call) freezes every operator power for good: position management, LpDesk and FirmVault buybacks, burn and
+  the veto. SPEC.md section 2 fixes this design (no owner power beyond the operator's); the operator must verify the
+  new address controls a working signer on Robinhood Chain before calling it.
+- Governance slots and quorum, as SPEC.md 2a fixes them: one open non-operator proposal per kind means a staker with
+  0.1% of the staked total can keep that slot occupied by re-proposing each time a proposal of theirs fails (3 days
+  of voting with no votes), so other stakers can only create one of that kind in the block the slot frees; the
+  operator's own slot is never blocked. Quorum is 3% of the total staked at the checkpoint, so while little is
+  staked a single staker's vote is quorum and majority, and an AddVenue, AddBridge or BridgeOut they propose becomes
+  executable 5 days after creation unless the operator vetoes within the 2-day window. The operator should watch
+  `Proposed` events; stakers who want a say need to stake.
 - Governance: a passed, unvetoed AddVenue or AddBridge can list a contract that answers the spec's interface checks.
   BridgeOut additionally requires the NOTSTOCK to land in the adapter itself (ADAPTATION.md 3). The operator's 2-day
   veto is the protection against a malicious venue or adapter proposal; with little NOTSTOCK staked, quorum is small.
 - Prices: open, top-up and governed opens compare against the pool's own price, never a market reference, as SPEC.md
   requires; the operator (or proposal author) sets the price and range by hand.
 - Fee split dust: a quarter is rounded down; the remainder of a collected fee stays in LpDesk's free balance.
+- Collected fees are LpDesk's balance change of the call on every venue kind (ADAPTATION.md 13), so a fee-on-transfer
+  asset listed later by AddAsset would be split by what arrived. No such asset is listed at deploy.
 - The launch factory's record (`positionOf`, `registry().artifactsOf`, `setRequester`) is read once at registration.
   The fee used in that check is the constant 12500 (ADAPTATION.md 1).
 
@@ -123,7 +145,7 @@ it, and the supply split is done by the launch factory.
 - `forge build`, `forge test`, `forge fmt --check` with the pinned solc 0.8.26. Unit tests (`test/Units.t.sol`) run
   offline against mocks of the factory's read surface; fork tests (`test/Fork.t.sol`) run every live-venue case of
   SPEC.md 6 on a Robinhood Chain fork and skip elsewhere:
-  `forge test --fork-url <robinhood rpc> --fork-block-number 112364504`.
+  `forge test --fork-url <robinhood rpc> --fork-block-number 112507631` (the public endpoint for chain 4663).
 - forge-std is vendored under `test/vendor/forge-std` with relative imports; no `lib/`, no `remappings.txt`.
 - The verifier's fuzz seed was used locally: `FOUNDRY_FUZZ_SEED=0x840174e71399babdb71fe833ed05b4cd6d1df57a8be3da89226553b890dbbcc7`.
 

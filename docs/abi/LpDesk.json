@@ -1323,6 +1323,11 @@
   },
   {
     "type": "error",
+    "name": "BuybackMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ImdNotBuyable",
     "inputs": []
   },

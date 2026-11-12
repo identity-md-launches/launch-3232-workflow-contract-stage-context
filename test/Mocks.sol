@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20, LaunchPosition, Artifact, PoolKey, IOFTAdapter} from "../src/interfaces/IExternal.sol";
+import {
+    IERC20,
+    LaunchPosition,
+    Artifact,
+    PoolKey,
+    IOFTAdapter,
+    INonfungiblePositionManager
+} from "../src/interfaces/IExternal.sol";
+import {PoolMath} from "../src/libraries/PoolMath.sol";
 import {LaunchToken} from "../src/LaunchToken.sol";
 import {LpDesk} from "../src/LpDesk.sol";
 import {FirmVault} from "../src/FirmVault.sol";
@@ -179,5 +187,185 @@ contract FakeVenue {
     constructor(address f, address w) {
         factory = f;
         WETH9 = w;
+    }
+}
+
+interface IV3SwapCallbackLike {
+    function uniswapV3SwapCallback(int256, int256, bytes calldata) external;
+}
+
+/// @notice A V3-shaped pool whose in-range liquidity runs out: like UniswapV3Pool.swap it stops at the price limit
+/// with input left over, consuming only 60% of an exact input, and asks the callback to pay only what it consumed
+/// (finding cfbdc8d3). Its price is fixed at 1:1.
+contract ThinPool {
+    address public token0;
+    address public token1;
+
+    constructor(address t0, address t1) {
+        token0 = t0;
+        token1 = t1;
+    }
+
+    function slot0() external pure returns (uint160, int24, uint16, uint16, uint16, uint8, bool) {
+        return (79228162514264337593543950336, 0, 0, 0, 0, 0, true);
+    }
+
+    function swap(address recipient, bool zeroForOne, int256 amountSpecified, uint160, bytes calldata data)
+        external
+        returns (int256 amount0, int256 amount1)
+    {
+        int256 consumed = amountSpecified * 6 / 10;
+        int256 out = -consumed / 2;
+        (amount0, amount1) = zeroForOne ? (consumed, out) : (out, consumed);
+        address tokenIn = zeroForOne ? token0 : token1;
+        address tokenOut = zeroForOne ? token1 : token0;
+        uint256 before = IERC20(tokenIn).balanceOf(address(this));
+        IERC20(tokenOut).transfer(recipient, uint256(-out));
+        IV3SwapCallbackLike(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
+        require(IERC20(tokenIn).balanceOf(address(this)) - before >= uint256(consumed), "unpaid");
+    }
+}
+
+/// @notice A V3-shaped position manager and factory in one, with one ThinPool, carrying enough of the v3 surface for
+/// LpDesk to open, poke, collect, top up, move and buy back offline. Meant to be etched at a listed venue address and
+/// then init()ed. Liquidity is PoolMath's at 1:1 for the deposited amounts; principal is returned pro rata.
+contract MockV3Manager {
+    struct Pos {
+        address token0;
+        address token1;
+        int24 tickLower;
+        int24 tickUpper;
+        uint128 liquidity;
+        uint256 principal0;
+        uint256 principal1;
+        uint256 owed0;
+        uint256 owed1;
+    }
+
+    uint160 constant ONE = 79228162514264337593543950336;
+    address public pool;
+    uint256 public nextId;
+    mapping(uint256 => Pos) public pos;
+
+    function init(address p) external {
+        pool = p;
+        nextId = 1;
+    }
+
+    function factory() external view returns (address) {
+        return address(this);
+    }
+
+    function WETH9() external pure returns (address) {
+        return FirmAddresses.WETH;
+    }
+
+    function getPool(address, address, uint24) external view returns (address) {
+        return pool;
+    }
+
+    function feeAmountTickSpacing(uint24) external pure returns (int24) {
+        return 60;
+    }
+
+    function setApprovalForAll(address, bool) external {}
+
+    function createAndInitializePoolIfNecessary(address, address, uint24, uint160) external view returns (address) {
+        return pool;
+    }
+
+    /// @dev Test helper: books `f0`/`f1` as fees owed to the position (the tokens must be sent here first).
+    function addFees(uint256 tokenId, uint256 f0, uint256 f1) external {
+        pos[tokenId].owed0 += f0;
+        pos[tokenId].owed1 += f1;
+    }
+
+    function _liq(int24 lo, int24 hi, uint256 a0, uint256 a1) private pure returns (uint128) {
+        uint160 sa = PoolMath.getSqrtRatioAtTick(lo);
+        uint160 sb = PoolMath.getSqrtRatioAtTick(hi);
+        return PoolMath.liquidityFromAmount0(ONE, sa, sb, a0) + PoolMath.liquidityFromAmount1(ONE, sa, sb, a1);
+    }
+
+    function mint(INonfungiblePositionManager.MintParams calldata p)
+        external
+        returns (uint256 tokenId, uint128 liquidity, uint256 a0, uint256 a1)
+    {
+        tokenId = nextId++;
+        a0 = p.amount0Desired;
+        a1 = p.amount1Desired;
+        if (a0 > 0) require(IERC20(p.token0).transferFrom(msg.sender, address(this), a0));
+        if (a1 > 0) require(IERC20(p.token1).transferFrom(msg.sender, address(this), a1));
+        liquidity = _liq(p.tickLower, p.tickUpper, a0, a1);
+        pos[tokenId] = Pos(p.token0, p.token1, p.tickLower, p.tickUpper, liquidity, a0, a1, 0, 0);
+    }
+
+    function increaseLiquidity(INonfungiblePositionManager.IncreaseLiquidityParams calldata p)
+        external
+        returns (uint128 liquidity, uint256 a0, uint256 a1)
+    {
+        Pos storage s = pos[p.tokenId];
+        a0 = p.amount0Desired;
+        a1 = p.amount1Desired;
+        if (a0 > 0) require(IERC20(s.token0).transferFrom(msg.sender, address(this), a0));
+        if (a1 > 0) require(IERC20(s.token1).transferFrom(msg.sender, address(this), a1));
+        liquidity = _liq(s.tickLower, s.tickUpper, a0, a1);
+        s.liquidity += liquidity;
+        s.principal0 += a0;
+        s.principal1 += a1;
+    }
+
+    function decreaseLiquidity(INonfungiblePositionManager.DecreaseLiquidityParams calldata p)
+        external
+        returns (uint256 a0, uint256 a1)
+    {
+        Pos storage s = pos[p.tokenId];
+        require(s.liquidity >= p.liquidity, "liquidity");
+        a0 = s.principal0 * p.liquidity / s.liquidity;
+        a1 = s.principal1 * p.liquidity / s.liquidity;
+        s.liquidity -= p.liquidity;
+        s.principal0 -= a0;
+        s.principal1 -= a1;
+        s.owed0 += a0;
+        s.owed1 += a1;
+    }
+
+    function collect(INonfungiblePositionManager.CollectParams calldata p) external returns (uint256 c0, uint256 c1) {
+        Pos storage s = pos[p.tokenId];
+        c0 = s.owed0;
+        c1 = s.owed1;
+        s.owed0 = 0;
+        s.owed1 = 0;
+        if (c0 > 0) require(IERC20(s.token0).transfer(p.recipient, c0));
+        if (c1 > 0) require(IERC20(s.token1).transfer(p.recipient, c1));
+    }
+
+    function positions(uint256 tokenId)
+        external
+        view
+        returns (
+            uint96,
+            address,
+            address,
+            address,
+            uint24,
+            int24,
+            int24,
+            uint128 liquidity,
+            uint256,
+            uint256,
+            uint128,
+            uint128
+        )
+    {
+        liquidity = pos[tokenId].liquidity;
+    }
+}
+
+/// @notice A contract posing as a v4 PoolManager (finding 55ef5a4b): calls VenueV4.unlockCallback directly.
+contract FakePoolManager {
+    function attack(address venue, bytes calldata data) external returns (bytes memory) {
+        (bool ok, bytes memory ret) = venue.call(abi.encodeWithSignature("unlockCallback(bytes)", data));
+        require(ok, string(ret));
+        return ret;
     }
 }

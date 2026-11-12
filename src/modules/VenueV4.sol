@@ -11,6 +11,8 @@ import {FirmAddresses} from "../FirmAddresses.sol";
 /// through PoolManager.unlock with the output taken straight to the dead address.
 contract VenueV4 {
     address public immutable lpDesk;
+    /// @dev The PoolManager this module is inside an unlock of; unlockCallback answers only it (finding 55ef5a4b).
+    address private _pendingPoolManager;
 
     // v4-periphery Actions
     uint8 private constant INCREASE_LIQUIDITY = 0x00;
@@ -117,7 +119,11 @@ contract VenueV4 {
 
     // ---------------------------------------------------------------- collect / decrease
 
+    /// @notice Collects the position's fees to LpDesk by a zero-liquidity decrease. An empty position has nothing
+    /// pending (v4 credits fees on every liquidity change) and the PoolManager refuses to poke it, so it is skipped
+    /// (finding 0e020971).
     function collectFees(PosRef calldata r) external onlyDesk returns (uint256 fee0, uint256 fee1) {
+        if (IPositionManagerV4(r.positionManager).getPositionLiquidity(r.tokenId) == 0) return (0, 0);
         (fee0, fee1) = _decrease(r, 0, 0, 0);
     }
 
@@ -146,6 +152,9 @@ contract VenueV4 {
 
     // ---------------------------------------------------------------- swap (buyback)
 
+    /// @notice Exact-input swap of `amountIn` of `tokenIn` (already transferred here by LpDesk) in the position's own
+    /// pool, output to the dead address. The pool takes less than amountIn only when its liquidity runs out before
+    /// the price limit; the rest goes back to LpDesk in the same call.
     function swapExactInToDead(PosRef calldata r, address tokenIn, uint256 amountIn)
         external
         onlyDesk
@@ -154,14 +163,19 @@ contract VenueV4 {
         IPoolManager pm = IPoolManager(IPositionManagerV4(r.positionManager).poolManager());
         PoolKey memory key = keyOf(r);
         if (_sqrtPrice(pm, key) == 0) revert NoPool();
-        bytes memory result = pm.unlock(abi.encode(pm, key, tokenIn, amountIn));
+        _pendingPoolManager = address(pm);
+        bytes memory result = pm.unlock(abi.encode(key, tokenIn, amountIn));
+        _pendingPoolManager = address(0);
         out = abi.decode(result, (uint256));
+        uint256 rest = IERC20(tokenIn).balanceOf(address(this));
+        if (rest > 0) require(IERC20(tokenIn).transfer(lpDesk, rest));
     }
 
+    /// @notice Answers only the PoolManager recorded by swapExactInToDead inside that call.
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
-        (IPoolManager pm, PoolKey memory key, address tokenIn, uint256 amountIn) =
-            abi.decode(data, (IPoolManager, PoolKey, address, uint256));
-        if (msg.sender != address(pm) || address(pm).code.length == 0) revert NotPoolManager();
+        IPoolManager pm = IPoolManager(_pendingPoolManager);
+        if (msg.sender != address(pm) || address(pm) == address(0)) revert NotPoolManager();
+        (PoolKey memory key, address tokenIn, uint256 amountIn) = abi.decode(data, (PoolKey, address, uint256));
         bool zeroForOne = tokenIn == key.currency0;
         int256 delta = pm.swap(
             key,
@@ -175,9 +189,14 @@ contract VenueV4 {
         int128 amount0 = int128(delta >> 128);
         int128 amount1 = int128(delta);
         uint256 out = uint256(uint128(zeroForOne ? amount1 : amount0));
-        pm.sync(tokenIn);
-        require(IERC20(tokenIn).transfer(address(pm), amountIn));
-        pm.settle();
+        int128 inSigned = zeroForOne ? amount0 : amount1;
+        uint256 spent = inSigned < 0 ? uint256(uint128(-inSigned)) : 0;
+        if (spent > amountIn) revert NotPoolManager();
+        if (spent > 0) {
+            pm.sync(tokenIn);
+            require(IERC20(tokenIn).transfer(address(pm), spent));
+            pm.settle();
+        }
         if (out > 0) pm.take(zeroForOne ? key.currency1 : key.currency0, FirmAddresses.DEAD, out);
         return abi.encode(out);
     }

@@ -147,10 +147,13 @@ contract VenueV3 {
     // ---------------------------------------------------------------- collect / decrease
 
     /// @notice Collects the position's fees to LpDesk. A 1-wei liquidity poke updates the owed fees; the principal that
-    /// poke returns (0 or 1 wei) is reported as principal, not fee.
+    /// poke returns (0 or 1 wei) is reported as principal, not fee. The fee is LpDesk's balance change of the call
+    /// less that principal (SPEC.md section 2), not the position manager's reported figure.
     function collectFees(PosRef calldata r) external onlyDesk returns (uint256 fee0, uint256 fee1) {
         INonfungiblePositionManager pm = INonfungiblePositionManager(r.positionManager);
         (,,,,,,, uint128 liquidity,,,,) = pm.positions(r.tokenId);
+        uint256 b0 = IERC20(r.token0).balanceOf(lpDesk);
+        uint256 b1 = IERC20(r.token1).balanceOf(lpDesk);
         uint256 p0;
         uint256 p1;
         if (liquidity > 0) {
@@ -160,13 +163,15 @@ contract VenueV3 {
                 })
             );
         }
-        (uint256 c0, uint256 c1) = pm.collect(
+        pm.collect(
             INonfungiblePositionManager.CollectParams({
                 tokenId: r.tokenId, recipient: lpDesk, amount0Max: type(uint128).max, amount1Max: type(uint128).max
             })
         );
-        fee0 = c0 - p0;
-        fee1 = c1 - p1;
+        uint256 c0 = IERC20(r.token0).balanceOf(lpDesk) - b0;
+        uint256 c1 = IERC20(r.token1).balanceOf(lpDesk) - b1;
+        fee0 = c0 > p0 ? c0 - p0 : 0;
+        fee1 = c1 > p1 ? c1 - p1 : 0;
     }
 
     /// @notice Withdraws `liquidity` (after collectFees in the same LpDesk call, so only principal is owed) to LpDesk.
@@ -191,7 +196,9 @@ contract VenueV3 {
     // ---------------------------------------------------------------- swap (buyback)
 
     /// @notice Exact-input swap of `amountIn` of `tokenIn` (already transferred here by LpDesk) in the position's own
-    /// pool; the output goes straight to the dead address.
+    /// pool; the output goes straight to the dead address. A v3/CL pool stops at the price limit when its liquidity
+    /// runs out and asks the callback only for what it consumed: whatever the pool did not take goes back to LpDesk
+    /// in the same call, so LpDesk's balance change is exactly the swapped input (finding cfbdc8d3).
     function swapExactInToDead(PosRef calldata r, address tokenIn, uint256 amountIn)
         external
         onlyDesk
@@ -200,6 +207,7 @@ contract VenueV3 {
         address pool = poolOf(r);
         if (pool == address(0)) revert NoPool();
         bool zeroForOne = tokenIn == r.token0;
+        uint256 before = IERC20(tokenIn).balanceOf(address(this));
         _pendingPool = pool;
         (int256 d0, int256 d1) = IV3PoolSwap(pool)
             .swap(
@@ -212,6 +220,9 @@ contract VenueV3 {
         _pendingPool = address(0);
         int256 outSigned = zeroForOne ? d1 : d0;
         out = outSigned < 0 ? uint256(-outSigned) : 0;
+        uint256 left = IERC20(tokenIn).balanceOf(address(this));
+        if (before - left > amountIn) revert WrongCallback();
+        if (left > 0) require(IERC20(tokenIn).transfer(lpDesk, left));
     }
 
     function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {

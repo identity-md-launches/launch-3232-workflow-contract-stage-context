@@ -93,7 +93,9 @@ interface IPriceGuard {
 
 /// @notice A venue module. Tokens for mint/increase/swap are transferred to the module by LpDesk just before the
 /// call; the module returns every unused or withdrawn amount to LpDesk (swap output to the dead address) in the same
-/// call and holds nothing afterwards.
+/// call and holds nothing afterwards. A pool whose liquidity runs out fills a swap partially: swapExactInToDead
+/// returns the input the pool did not take to LpDesk in the same call, and LpDesk reads what was taken from its own
+/// balance change.
 interface IVenueModule {
     function poolPrice(PosRef calldata r) external view returns (bool exists, uint160 sqrtPriceX96, int24 tick);
     function liquidityOf(PosRef calldata r) external view returns (uint128);

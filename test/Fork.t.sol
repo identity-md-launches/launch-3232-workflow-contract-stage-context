@@ -150,12 +150,12 @@ contract ForkTest is TestBase {
         if (r.kind == VenueKind.V4) {
             IPoolManager pm = IPoolManager(FirmAddresses.UNI_V4_POOL_MANAGER);
             PoolKey memory key = PoolKey(r.token0, r.token1, r.fee, r.tickSpacing, address(0));
-            trader.swapV4(pm, key, p.asset, amountAsset);
-            trader.swapV4(pm, key, address(token), amountNotStock);
+            if (amountAsset > 0) trader.swapV4(pm, key, p.asset, amountAsset);
+            if (amountNotStock > 0) trader.swapV4(pm, key, address(token), amountNotStock);
         } else {
             address pool = _poolOf(r);
-            trader.swapV3(pool, p.asset, p.asset == r.token0, amountAsset);
-            trader.swapV3(pool, address(token), address(token) == r.token0, amountNotStock);
+            if (amountAsset > 0) trader.swapV3(pool, p.asset, p.asset == r.token0, amountAsset);
+            if (amountNotStock > 0) trader.swapV3(pool, address(token), address(token) == r.token0, amountNotStock);
         }
     }
 
@@ -292,6 +292,139 @@ contract ForkTest is TestBase {
 
     function test_aeroSlipstreamVenue() public onFork {
         _runVenue(FirmAddresses.AERO_CL_POSITION_MANAGER, VenueKind.CL, 0, 200);
+    }
+
+    /// @dev v4 credits a position's pending fees on every liquidity change (finding a34ecfd2): a move into it and a
+    /// top-up of it collect and split those fees first instead of netting them against the deposit, and a top-up of a
+    /// position with fees pending in both currencies no longer reverts DeltaNotNegative.
+    function test_v4PendingFeesAreSplitBeforeMoveAndTopUp() public onFork {
+        address pm = FirmAddresses.UNI_V4_POSITION_MANAGER;
+        bool n0 = address(token) < WETH;
+        vm.prank(DEV);
+        uint256 a = desk.open(_params(WETH, pm, 3000, 60, -12000, 12000, ONE, 300e18));
+        vm.prank(DEV);
+        uint256 b = desk.open(_params(WETH, pm, 3000, 60, -12000, 12000, ONE, 100e18));
+        _trade(a, 1e18, 1e18);
+        uint256 burner0 = token.balanceOf(address(burner));
+        uint256 proj0 = IERC20(WETH).balanceOf(PROJECT);
+        vm.prank(DEV);
+        desk.collect(b);
+        uint256 burnerB = token.balanceOf(address(burner)) - burner0;
+        uint256 projB = IERC20(WETH).balanceOf(PROJECT) - proj0;
+        assertGt(burnerB, 0);
+        assertGt(projB, 0);
+        // a holds 3x b's liquidity, so at least 3x its fees are pending: the move splits them
+        uint128 lb = desk.positionLiquidity(b);
+        uint256 freeWeth = desk.freeBalance(WETH);
+        vm.prank(DEV);
+        desk.moveLiquidity(b, a, lb, 0, 0);
+        assertGe(token.balanceOf(address(burner)) - burner0 - burnerB, 3 * burnerB - 3, "a's NOTSTOCK fees to Burner");
+        assertGe(IERC20(WETH).balanceOf(PROJECT) - proj0 - projB, 3 * projB - 3, "a's WETH fees to the project");
+        assertEq(desk.positionLiquidity(b), 0);
+        // leftovers of the move stay free; nothing but the fee quarter reached the free balance beyond them
+        assertGe(desk.freeBalance(WETH), freeWeth);
+        // a WETH-only position next to the current tick earns fees in both currencies, then a top-up of it succeeds
+        (, uint160 cur, int24 tick) = _module(VenueKind.V4).poolPrice(_ref(a));
+        int24 base = (tick / 60) * 60;
+        OpenParams memory q = n0
+            ? _params(WETH, pm, 3000, 60, base - 6000, base - 60, cur, 10e18)
+            : _params(WETH, pm, 3000, 60, base + 120, base + 6000, cur, 10e18);
+        vm.prank(DEV);
+        uint256 id2 = desk.open(q);
+        _trade(a, 0, 20e18);
+        _trade(a, 20e18, 0);
+        vm.prank(DEV);
+        desk.collect(a);
+        uint256 t = desk.topUpBasket(WETH);
+        assertGt(t, 0);
+        (, cur,) = _module(VenueKind.V4).poolPrice(_ref(a));
+        uint160 sa = PoolMath.getSqrtRatioAtTick(q.tickLower);
+        uint160 sb = PoolMath.getSqrtRatioAtTick(q.tickUpper);
+        uint128 expectL =
+            n0 ? PoolMath.liquidityFromAmount1(cur, sa, sb, t) : PoolMath.liquidityFromAmount0(cur, sa, sb, t);
+        if (expectL == 0) return; // the price moved past the range on this fork: nothing to top up
+        proj0 = IERC20(WETH).balanceOf(PROJECT);
+        burner0 = token.balanceOf(address(burner));
+        vm.prank(DEV);
+        desk.increaseLiquidity(id2, t, cur, expectL * 995 / 1000);
+        assertGt(IERC20(WETH).balanceOf(PROJECT) - proj0, 0, "id2's pending WETH fees split by the top-up");
+        assertGt(token.balanceOf(address(burner)) - burner0, 0, "id2's pending NOTSTOCK fees to Burner");
+        assertEq(IERC20(WETH).balanceOf(address(v4)), 0);
+        assertEq(token.balanceOf(address(v4)), 0);
+    }
+
+    /// @dev A v4 position emptied by moveLiquidity can still be collected and closed (finding 0e020971).
+    function test_v4EmptiedPositionCanBeClosed() public onFork {
+        address pm = FirmAddresses.UNI_V4_POSITION_MANAGER;
+        vm.prank(DEV);
+        uint256 a = desk.open(_params(WETH, pm, 3000, 60, -12000, 12000, ONE, 300e18));
+        vm.prank(DEV);
+        uint256 b = desk.open(_params(WETH, pm, 3000, 60, -12000, 12000, ONE, 100e18));
+        uint128 lb = desk.positionLiquidity(b);
+        vm.prank(DEV);
+        desk.moveLiquidity(b, a, lb, 0, 0);
+        assertEq(desk.positionLiquidity(b), 0);
+        assertTrue(desk.getPosition(b).open);
+        vm.prank(DEV);
+        desk.collect(b);
+        vm.prank(DEV);
+        desk.close(b, 0, 0);
+        assertFalse(desk.getPosition(b).open);
+    }
+
+    /// @dev V3/CL: moveLiquidity with the published liquidity moves the whole position (finding cd21873d).
+    function test_v3MoveWithPublishedLiquidity() public onFork {
+        address pm = FirmAddresses.UNI_V3_POSITION_MANAGER;
+        vm.prank(DEV);
+        uint256 a = desk.open(_params(WETH, pm, 3000, 60, -12000, 12000, ONE, 100e18));
+        vm.prank(DEV);
+        uint256 b = desk.open(_params(WETH, pm, 3000, 60, -6000, 6000, ONE, 100e18));
+        _trade(a, 1e18, 1e18);
+        uint128 la = desk.positionLiquidity(a);
+        uint128 lb = desk.positionLiquidity(b);
+        vm.prank(DEV);
+        desk.moveLiquidity(a, b, la, 0, 0);
+        assertEq(desk.positionLiquidity(a), 0);
+        assertGt(desk.positionLiquidity(b), lb);
+        assertEq(IERC20(WETH).balanceOf(address(v3)), 0);
+        assertEq(token.balanceOf(address(v3)), 0);
+    }
+
+    /// @dev A buyback larger than the pool's liquidity fills partially on a live V3 and v4 pool: the basket is debited
+    /// by what the pool took, the rest stays in it and the module holds nothing (finding cfbdc8d3).
+    function _partialFill(address pm, VenueKind kind, uint24 fee, int24 spacing) internal {
+        // fees from a large trade on a deep pool fill the WETH buyback basket
+        vm.prank(DEV);
+        uint256 big = desk.open(_params(WETH, pm, 3000, 60, -12000, 12000, ONE, 300e18));
+        _trade(big, 200e18, 0);
+        vm.prank(DEV);
+        desk.collect(big);
+        uint256 bb = desk.buybackBasket(WETH);
+        assertGt(bb, 1e17);
+        // a tiny position on its own pool of another fee tier: the only liquidity there
+        vm.prank(DEV);
+        uint256 tiny = desk.open(_params(WETH, pm, fee, spacing, -spacing * 10, spacing * 10, ONE, 1e16));
+        uint256 deskWeth = IERC20(WETH).balanceOf(address(desk));
+        uint256 dead = token.balanceOf(DEAD);
+        uint256 free = desk.freeBalance(WETH);
+        vm.prank(DEV);
+        uint256 out = desk.buyback(tiny, bb, 1);
+        uint256 spent = deskWeth - IERC20(WETH).balanceOf(address(desk));
+        assertLt(spent, bb, "the thin pool took only part of the input");
+        assertGt(spent, 0);
+        assertEq(desk.buybackBasket(WETH), bb - spent, "basket debited by what was swapped");
+        assertEq(desk.freeBalance(WETH), free, "free balance untouched");
+        assertEq(token.balanceOf(DEAD) - dead, out);
+        assertGt(out, 0);
+        assertEq(IERC20(WETH).balanceOf(address(_module(kind))), 0, "module holds nothing");
+    }
+
+    function test_partialFillBuybackV3() public onFork {
+        _partialFill(FirmAddresses.UNI_V3_POSITION_MANAGER, VenueKind.V3, 500, 10);
+    }
+
+    function test_partialFillBuybackV4() public onFork {
+        _partialFill(FirmAddresses.UNI_V4_POSITION_MANAGER, VenueKind.V4, 500, 10);
     }
 
     /// @dev A pool created beforehand at a price more than 0.5% away makes the open revert; within 0.5% it opens.

@@ -963,6 +963,11 @@
   },
   {
     "type": "error",
+    "name": "MulDivOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NoValueExpected",
     "inputs": []
   },
@@ -974,6 +979,11 @@
   {
     "type": "error",
     "name": "NotOperator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TickOutOfRange",
     "inputs": []
   },
   {

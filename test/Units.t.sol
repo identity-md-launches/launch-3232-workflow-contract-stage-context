@@ -2,7 +2,16 @@
 pragma solidity 0.8.26;
 
 import {TestBase} from "./TestBase.sol";
-import {MockERC20, MockFactory, MockOFTAdapter, EvilAdapter, FakeVenue} from "./Mocks.sol";
+import {
+    MockERC20,
+    MockFactory,
+    MockOFTAdapter,
+    EvilAdapter,
+    FakeVenue,
+    ThinPool,
+    MockV3Manager,
+    FakePoolManager
+} from "./Mocks.sol";
 import {LaunchToken} from "../src/LaunchToken.sol";
 import {LpDesk} from "../src/LpDesk.sol";
 import {FirmVault} from "../src/FirmVault.sol";
@@ -13,7 +22,8 @@ import {PriceGuard} from "../src/modules/PriceGuard.sol";
 import {VenueV3} from "../src/modules/VenueV3.sol";
 import {VenueV4} from "../src/modules/VenueV4.sol";
 import {PoolMath} from "../src/libraries/PoolMath.sol";
-import {OpenParams, VenueKind, Venue} from "../src/interfaces/ILpDesk.sol";
+import {OpenParams, VenueKind, Venue, PosRef} from "../src/interfaces/ILpDesk.sol";
+import {PoolKey, IERC20} from "../src/interfaces/IExternal.sol";
 import {FirmAddresses} from "../src/FirmAddresses.sol";
 
 contract TokenTest is TestBase {
@@ -96,6 +106,11 @@ contract PoolMathTest is TestBase {
         // +0.6% price = sqrt(1.006) ~ 1.0029955
         assertFalse(PoolMath.within0_5Percent(uint160(uint256(p) * 1003000 / 1000000), p));
         assertFalse(PoolMath.within0_5Percent(uint160(uint256(p) * 996990 / 1000000), p));
+        // full resolution at any price (finding 5395cffb): a 4x ratio and a 0.6% move at sqrt prices below 2^48
+        assertFalse(PoolMath.within0_5Percent(uint160(1) << 47, uint160(1) << 46));
+        assertFalse(PoolMath.within0_5Percent(uint160((uint256(1) << 47) * 1003000 / 1000000), uint160(1) << 47));
+        assertTrue(PoolMath.within0_5Percent(uint160((uint256(1) << 47) * 1001998 / 1000000), uint160(1) << 47));
+        assertTrue(PoolMath.within0_5Percent(type(uint160).max - 1, type(uint160).max));
     }
 
     function testFuzz_liquidityRoundTrip(uint128 amount, int24 lo, int24 hi) public pure {
@@ -727,9 +742,186 @@ contract GovernanceTest is TestBase {
         OpenParams memory p;
         p.asset = WETH;
         p.venue = FirmAddresses.UNI_V3_POSITION_MANAGER;
+        p.tickLower = -600;
+        p.tickUpper = 600;
+        p.sqrtPriceX96 = 79228162514264337593543950336;
         p.amount = 500_000_001e18;
         vm.expectRevert(LpGovernor.AboveFreeBalance.selector);
         vm.prank(alice);
         gov.proposeOpenPosition(p);
+    }
+}
+
+/// @notice LpDesk position flow offline on a mock V3 manager etched at the listed Uniswap v3 address, with a thin
+/// pool: buyback partial fills (finding cfbdc8d3), moveLiquidity with the published liquidity (cd21873d), fees split
+/// before a top-up (a34ecfd2), the asset-only proposal check (3d06756d) and a fake PoolManager (55ef5a4b).
+contract VenueFlowTest is TestBase {
+    uint160 constant ONE = 79228162514264337593543950336;
+    address constant V3PM = FirmAddresses.UNI_V3_POSITION_MANAGER;
+    MockV3Manager mgr;
+    ThinPool pool;
+    bool n0;
+
+    function setUp() public {
+        _etchImd();
+        _fullSetup(address(0));
+        MockERC20 w = new MockERC20("Wrapped Ether", "WETH", 18);
+        vm.etch(WETH, address(w).code);
+        MockV3Manager m = new MockV3Manager();
+        vm.etch(V3PM, address(m).code);
+        mgr = MockV3Manager(V3PM);
+        n0 = address(token) < WETH;
+        (address t0, address t1) = n0 ? (address(token), WETH) : (WETH, address(token));
+        pool = new ThinPool(t0, t1);
+        mgr.init(address(pool));
+        vm.prank(DEV);
+        token.transfer(address(pool), 1_000e18);
+        MockERC20(WETH).mint(address(desk), 1_000e18);
+    }
+
+    function _params(int24 lo, int24 hi, uint256 amount) internal view returns (OpenParams memory p) {
+        p = OpenParams(WETH, V3PM, 3000, 60, lo, hi, ONE, amount, 0, 0);
+        uint160 sa = PoolMath.getSqrtRatioAtTick(lo);
+        uint160 sb = PoolMath.getSqrtRatioAtTick(hi);
+        uint128 l = n0
+            ? PoolMath.liquidityFromAmount0(ONE, sa, sb, amount)
+            : PoolMath.liquidityFromAmount1(ONE, sa, sb, amount);
+        if (l == 0) {
+            l = n0
+                ? PoolMath.liquidityFromAmount1(ONE, sa, sb, amount)
+                : PoolMath.liquidityFromAmount0(ONE, sa, sb, amount);
+        }
+        (uint256 a0, uint256 a1) = PoolMath.getAmountsForLiquidity(ONE, sa, sb, l);
+        p.amount0Min = a0 * 995 / 1000;
+        p.amount1Min = a1 * 995 / 1000;
+    }
+
+    function _open(int24 lo, int24 hi, uint256 amount) internal returns (uint256 id) {
+        vm.prank(DEV);
+        id = desk.open(_params(lo, hi, amount));
+    }
+
+    /// @dev Books `amount` of WETH fees on the position and collects them: the WETH basket gains a quarter.
+    function _feesAndCollect(uint256 id, uint256 amount) internal {
+        uint256 tokenId = desk.getPosition(id).tokenId;
+        MockERC20(WETH).mint(address(mgr), amount);
+        if (n0) mgr.addFees(tokenId, 0, amount);
+        else mgr.addFees(tokenId, amount, 0);
+        vm.prank(DEV);
+        desk.collect(id);
+    }
+
+    function test_buybackPartialFillDebitsOnlyWhatWasSwapped() public {
+        uint256 id = _open(-600, 600, 10e18);
+        _feesAndCollect(id, 400e18);
+        assertEq(desk.buybackBasket(WETH), 100e18);
+        uint256 free = desk.freeBalance(WETH);
+        uint256 deskWeth = IERC20(WETH).balanceOf(address(desk));
+        uint256 dead = token.balanceOf(DEAD);
+        vm.expectEmit(true, false, false, true);
+        emit LpDesk.BuybackExecuted(id, 60e18, 30e18);
+        vm.prank(DEV);
+        uint256 out = desk.buyback(id, 100e18, 30e18);
+        assertEq(out, 30e18);
+        assertEq(token.balanceOf(DEAD) - dead, 30e18, "all NOTSTOCK out to the dead address");
+        // the pool took 60e18: the basket keeps the other 40e18, nothing is stranded or re-labelled
+        assertEq(desk.buybackBasket(WETH), 40e18, "basket debited by what was swapped");
+        assertEq(deskWeth - IERC20(WETH).balanceOf(address(desk)), 60e18, "LpDesk paid exactly the swapped input");
+        assertEq(IERC20(WETH).balanceOf(address(pool)), 60e18);
+        assertEq(IERC20(WETH).balanceOf(address(v3)), 0, "module holds nothing");
+        assertEq(desk.freeBalance(WETH), free, "free balance untouched");
+        // minOut is checked against the actual output
+        vm.expectRevert(LpDesk.BelowMinOut.selector);
+        vm.prank(DEV);
+        desk.buyback(id, 40e18, 12e18 + 1);
+        vm.expectRevert(LpDesk.AboveBasket.selector);
+        vm.prank(DEV);
+        desk.buyback(id, 40e18 + 1, 0);
+        vm.prank(DEV);
+        desk.buyback(id, 40e18, 12e18);
+        assertEq(desk.buybackBasket(WETH), 16e18);
+        assertEq(IERC20(WETH).balanceOf(address(v3)), 0);
+    }
+
+    function test_moveLiquidityAcceptsPublishedLiquidity() public {
+        uint256 a = _open(-600, 600, 10e18);
+        uint256 b = _open(-1200, 1200, 10e18);
+        uint128 la = desk.positionLiquidity(a);
+        uint128 lb = desk.positionLiquidity(b);
+        assertGt(la, 1);
+        // the published figure moves the whole position even though the fee poke burns 1 wei first
+        vm.prank(DEV);
+        desk.moveLiquidity(a, b, la, 0, 0);
+        assertEq(desk.positionLiquidity(a), 0);
+        assertGt(desk.positionLiquidity(b), lb);
+        assertEq(IERC20(WETH).balanceOf(address(v3)), 0);
+        assertEq(token.balanceOf(address(v3)), 0);
+    }
+
+    function test_moveAndTopUpCollectPendingFeesFirst() public {
+        uint256 a = _open(-600, 600, 10e18);
+        uint256 b = _open(-1200, 1200, 10e18);
+        // an asset-only range (entirely on the WETH side of 1:1)
+        uint256 c = n0 ? _open(-6000, -60, 1e18) : _open(60, 6000, 1e18);
+        _feesAndCollect(c, 400e18); // top-up basket 100e18
+        // pending fees on the destination of a move and on the topped-up position are split in the same call
+        MockERC20(WETH).mint(address(mgr), 80e18);
+        mgr.addFees(desk.getPosition(b).tokenId, n0 ? 0 : 40e18, n0 ? 40e18 : 0);
+        mgr.addFees(desk.getPosition(c).tokenId, n0 ? 0 : 40e18, n0 ? 40e18 : 0);
+        uint256 proj = IERC20(WETH).balanceOf(PROJECT);
+        uint128 la = desk.positionLiquidity(a);
+        vm.prank(DEV);
+        desk.moveLiquidity(a, b, la, 0, 0);
+        assertEq(IERC20(WETH).balanceOf(PROJECT) - proj, 10e18, "destination fees split by the move");
+        assertEq(desk.topUpBasket(WETH), 110e18);
+        proj = IERC20(WETH).balanceOf(PROJECT);
+        uint160 sa = PoolMath.getSqrtRatioAtTick(desk.getPosition(c).tickLower);
+        uint160 sb = PoolMath.getSqrtRatioAtTick(desk.getPosition(c).tickUpper);
+        uint128 expectL = n0
+            ? PoolMath.liquidityFromAmount1(ONE, sa, sb, 100e18)
+            : PoolMath.liquidityFromAmount0(ONE, sa, sb, 100e18);
+        uint128 before = desk.positionLiquidity(c);
+        vm.prank(DEV);
+        desk.increaseLiquidity(c, 100e18, ONE, expectL * 995 / 1000);
+        assertEq(IERC20(WETH).balanceOf(PROJECT) - proj, 10e18, "position fees split by the top-up");
+        assertEq(desk.topUpBasket(WETH), 20e18, "basket paid the whole top-up, fees added their quarter");
+        assertGe(desk.positionLiquidity(c) - before, expectL * 995 / 1000);
+        assertEq(IERC20(WETH).balanceOf(address(v3)), 0);
+    }
+
+    function test_openPositionProposalChecksTheAmountToken() public {
+        vm.prank(DEV);
+        token.transfer(alice, 10_000_000e18);
+        vm.startPrank(alice);
+        token.approve(address(gov), 1_000e18);
+        gov.stake(1_000e18);
+        vm.stopPrank();
+        vm.roll(vm.getBlockNumber() + 1);
+        // LpDesk holds 1 000 WETH free: an asset-only range for more reverts at creation, for less is created
+        OpenParams memory p = n0 ? _params(-6000, -60, 1_000e18 + 1) : _params(60, 6000, 1_000e18 + 1);
+        vm.expectRevert(LpGovernor.AboveFreeBalance.selector);
+        vm.prank(alice);
+        gov.proposeOpenPosition(p);
+        p.amount = 1_000e18;
+        vm.prank(alice);
+        gov.proposeOpenPosition(p);
+        // a NOTSTOCK-denominated range is still checked against free NOTSTOCK
+        p = _params(-600, 600, 500_000_000e18 + 1);
+        vm.expectRevert(LpGovernor.AboveFreeBalance.selector);
+        vm.prank(DEV);
+        gov.proposeOpenPosition(p);
+    }
+
+    function test_fakePoolManagerCannotDriveUnlockCallback() public {
+        vm.prank(DEV);
+        token.transfer(address(v4), 1e18);
+        FakePoolManager fake = new FakePoolManager();
+        PoolKey memory key = PoolKey(address(token), address(0xBEEF), 3000, 60, address(0));
+        bytes memory data = abi.encode(key, address(token), uint256(1e18));
+        vm.expectRevert(abi.encodeWithSelector(VenueV4.NotPoolManager.selector));
+        fake.attack(address(v4), data);
+        vm.expectRevert(VenueV4.NotPoolManager.selector);
+        v4.unlockCallback(data);
+        assertEq(token.balanceOf(address(v4)), 1e18, "module balance untouched by a fake PoolManager");
     }
 }
