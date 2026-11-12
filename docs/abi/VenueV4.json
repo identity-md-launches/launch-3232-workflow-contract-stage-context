@@ -1,0 +1,714 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "collectFees",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fee0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fee1",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "decrease",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "liquidity",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "min0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "min1",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amt0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amt1",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "increase",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "amt0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amt1",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "liquidity",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "used0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "used1",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "keyOf",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "key",
+        "type": "tuple",
+        "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "liquidityOf",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lpDesk",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "mint",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "sqrtPriceX96",
+        "type": "uint160",
+        "internalType": "uint160"
+      },
+      {
+        "name": "amt0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amt1",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liquidity",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "used0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "used1",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "poolPrice",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "exists",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "sqrtPriceX96",
+        "type": "uint160",
+        "internalType": "uint160"
+      },
+      {
+        "name": "tick",
+        "type": "int24",
+        "internalType": "int24"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "swapExactInToDead",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct PosRef",
+        "components": [
+          {
+            "name": "positionManager",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VenueKind"
+          },
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickLower",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tickUpper",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "tokenIn",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unlockCallback",
+    "inputs": [
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "MulDivOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPool",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotLpDesk",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotPoolManager",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TickOutOfRange",
+    "inputs": []
+  }
+]
