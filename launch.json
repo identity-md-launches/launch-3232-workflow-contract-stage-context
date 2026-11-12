@@ -1,0 +1,40 @@
+{
+  "kind": "evm_project",
+  "token": {
+    "contract": "LaunchToken",
+    "name": "Not Firm",
+    "symbol": "NOTSTOCK",
+    "decimals": 18
+  },
+  "contracts": [
+    {
+      "contract": "LpDesk",
+      "constructorArgs": [
+        "$token",
+        "0x8ad18e99f4c8d8406f9ba8899cf308000518a981",
+        "$owner"
+      ]
+    },
+    {
+      "contract": "FirmVault",
+      "constructorArgs": [
+        "$owner",
+        "$contract:LpDesk"
+      ]
+    },
+    {
+      "contract": "GenesisSplitter",
+      "constructorArgs": [
+        "$contract:LpDesk",
+        "0x8ad18e99f4c8d8406f9ba8899cf308000518a981"
+      ]
+    }
+  ],
+  "pool": {
+    "pairedCurrency": "0x5f7bb59365ce557c26dbcaa4ee9d39a4b95b7127",
+    "fee": 12500,
+    "tickSpacing": 60,
+    "initialPrice": "79228162514264337593543950336"
+  },
+  "notes": "Not Firm (NOTSTOCK) on Robinhood Chain, paired with IMD. LaunchToken (src/LaunchToken.sol) is the fixed-supply ERC-20 with no owner, mint, fee, pause or upgrade. Three application contracts deploy in the launch transaction, in constructor dependency order. LpDesk(token, operator, projectWallet): token is $token; operator is the dev wallet SPEC.md fixes, 0x8ad18e99f4c8d8406f9ba8899cf308000518a981, which sets slippage outs by hand, runs buyback and holds the 2-day governance veto; projectWallet is $owner, the launch's owner 0x3c587eff6c96eacf7e3dcc2cff6416161386e48c, which receives 25% of every non-NOTSTOCK fee. LpDesk's constructor creates Burner (not a manifest contract) and only predicts the CREATE2 addresses of its modules; after launch anyone calls deployModule(kind, code) once per kind (LpGovernor, PriceGuard, VenueV3, VenueV4, script/DeployModules.s.sol), so the modules are not manifest contracts either. FirmVault(projectWallet, lpDesk): $owner and $contract:LpDesk; it receives the pool's 1% requester fee once the project wallet calls the factory's setRequester(launchNumber, FirmVault) after launch, and distribute(token) by anyone splits IMD 25/25/25/25 and sends NOTSTOCK to Burner. GenesisSplitter(lpDesk, devWallet): $contract:LpDesk and the same dev wallet; split() by anyone, once, sends 10/60 of its balance to the dev wallet and the rest to LpDesk after registerNotStock. No contract is allocated supply at launch: the factory mints the whole supply to itself, seeds the pool with 30%, sends 10% to the MerkleDistributor and 60% to the owner, who then transfers exactly 600,000,000 NOTSTOCK to GenesisSplitter by hand. No privileged role is given to the factory or to IMD's launch wallet; no initialization calls. The pool fields are the launch policy's: pairedCurrency IMD, fee 12500 (1.25%), tickSpacing 60; the deployer derives the opening price from the policy's 2,500 IMD opening market cap. The factory supplies the pool guard and the MerkleDistributor."
+}
